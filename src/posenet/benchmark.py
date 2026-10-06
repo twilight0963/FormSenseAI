@@ -38,8 +38,12 @@ def _report(label: str, ms: np.ndarray, batch: int) -> None:
 
 def bench_keras(model, size: int, batch: int, device: str, iters: int) -> np.ndarray:
     with tf.device(device):
+        # XLA cannot read variables placed on another device, so give the
+        # benchmark its own copy of the weights on the target device.
+        local = keras.models.clone_model(model)
+        local.set_weights(model.get_weights())
         x = tf.random.uniform((batch, size, size, 3), 0, 255)
-        fn = tf.function(model, jit_compile=True)
+        fn = tf.function(local, jit_compile=True)
         return _time(lambda: fn(x).numpy(), iters)
 
 
