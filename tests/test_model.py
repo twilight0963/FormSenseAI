@@ -63,3 +63,19 @@ def test_oks_perfect_prediction():
     gt[:, 2] = 2
     assert oks(gt[:, :2], gt, area=5000.0) == pytest.approx(1.0)
     assert oks(gt[:, :2] + 20.0, gt, area=5000.0) < 0.9
+
+
+@pytest.mark.skipif(not __import__("tensorflow").config.list_physical_devices("GPU"), reason="needs a GPU")
+def test_mixed_precision_xla_train_step_on_gpu():
+    """Regression: XLA on GPU rejected the fp16 bilinear-upsample gradient."""
+    previous = keras.mixed_precision.global_policy()
+    keras.mixed_precision.set_global_policy("mixed_float16")
+    try:
+        net = build_posenet(Config().model)
+    finally:
+        keras.mixed_precision.set_global_policy(previous)
+    net.compile(optimizer="adam", loss="mse", jit_compile=True)
+    x = np.random.default_rng(0).uniform(0, 255, (8, 192, 192, 3)).astype(np.float32)
+    y = np.zeros((8, 48, 48, NUM_KEYPOINTS), np.float32)
+    loss = net.train_on_batch(x, y)
+    assert np.isfinite(loss)

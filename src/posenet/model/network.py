@@ -49,7 +49,10 @@ def build_posenet(cfg: ModelConfig, num_keypoints: int = NUM_KEYPOINTS) -> keras
     # Top-down pathway: stride 32 → 16 → 8 → 4.
     y = conv_bn_act(features[-1], dec, kernel=1, name="lateral32")
     for f, stride in zip(reversed(features[:-1]), (16, 8, 4), strict=True):
-        y = layers.UpSampling2D(2, interpolation="bilinear", name=f"up{stride}")(y)
+        # float32: under mixed precision, XLA on GPU (TF 2.20) fails to compile
+        # the fp16 bilinear-resize gradient ("Seen floating point types of
+        # different precisions"). The merge Add casts back to the compute dtype.
+        y = layers.UpSampling2D(2, interpolation="bilinear", dtype="float32", name=f"up{stride}")(y)
         lateral = conv_bn_act(f, dec, kernel=1, name=f"lateral{stride}")
         y = layers.Add(name=f"merge{stride}")([y, lateral])
         y = separable_block(y, dec, name=f"refine{stride}")
