@@ -23,10 +23,11 @@ def main() -> None:
     parser.add_argument("--config", default="configs/default.yaml")
     parser.add_argument("--out", default="outputs/samples.png")
     parser.add_argument("--count", type=int, default=16)
+    parser.add_argument("--split", default="train", choices=["train", "val"])
     args = parser.parse_args()
 
     cfg = Config.from_yaml(args.config)
-    ds = tf.data.TFRecordDataset(shard_files(cfg, "train")[:1]).take(args.count)
+    ds = tf.data.TFRecordDataset(shard_files(cfg, args.split)[:1]).take(args.count)
     tiles = []
     for serialized in ds:
         image, xy, w = train_transform(cfg, parse_example(serialized))
