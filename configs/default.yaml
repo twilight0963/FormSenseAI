@@ -1,0 +1,43 @@
+data:
+  coco_root: data/coco
+  tfrecord_dir: data/tfrecords
+  crop_size: 256          # stored crop resolution (gives augmentation margin)
+  bbox_scale: 1.25        # bbox enlargement before cropping
+  min_keypoints: 5        # min labeled keypoints per instance
+  min_bbox_area: 1024     # 32x32 px
+  num_shards_train: 64
+  num_shards_val: 8
+  jpeg_quality: 95
+
+model:
+  input_size: 192
+  heatmap_stride: 4       # 192 / 4 = 48x48 heatmaps
+  width_multiplier: 1.0
+  decoder_channels: 96
+
+augment:
+  scale_min: 0.75
+  scale_max: 1.25
+  rotation_deg: 30.0
+  rotation_prob: 0.6
+  translate_frac: 0.05
+  flip_prob: 0.5
+  brightness: 0.2
+  contrast: 0.2
+  saturation: 0.2
+  hue: 0.03
+
+train:
+  batch_size: 64
+  epochs: 140
+  warmup_epochs: 3
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  heatmap_sigma: 2.0
+  mixed_precision: true
+  jit_compile: true
+  steps_per_execution: 32
+  shuffle_buffer: 8192
+  early_stopping_patience: 20
+  seed: 42
+  output_dir: runs
