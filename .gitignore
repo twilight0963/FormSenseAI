@@ -1,6 +1,6 @@
 .venv/
-data/
-runs/
+/data/
+/runs/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -8,4 +8,4 @@ __pycache__/
 .ruff_cache/
 *.tfrecord
 *.tflite
-outputs/
+/outputs/
