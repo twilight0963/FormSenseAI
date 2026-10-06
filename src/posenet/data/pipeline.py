@@ -171,9 +171,13 @@ def build_dataset(
         limit: use only the first ``limit`` records (overfit / smoke tests).
     """
     augment = training if augment is None else augment
-    ds = _record_dataset(shard_files(cfg, split), shuffle=training and limit is None)
     if limit is not None:
-        ds = ds.take(limit).cache()
+        # Read shards one after another so "the first N records" is the same
+        # set in every pipeline. Parallel reads interleave shards, and with
+        # deterministic=False (training) that order changes between runs.
+        ds = tf.data.TFRecordDataset(shard_files(cfg, split)).take(limit).cache()
+    else:
+        ds = _record_dataset(shard_files(cfg, split), shuffle=training)
     if training:
         ds = ds.shuffle(cfg.train.shuffle_buffer).repeat()
 

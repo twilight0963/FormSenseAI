@@ -82,3 +82,39 @@ def test_build_dataset_shapes(cfg):
     assert y.shape == (4, 48, 48, 2 * NUM_KEYPOINTS)
     val = list(pipeline.build_dataset(cfg, "val", training=False))
     assert sum(int(b[0].shape[0]) for b in val) == 8
+
+
+def test_limit_selects_same_records_in_train_and_eval(tmp_path):
+    """--overfit must train and validate on the same N records across shards."""
+    cfg = Config()
+    cfg.data.tfrecord_dir = str(tmp_path)
+    _, jpeg = cv2.imencode(".jpg", _blob_image())
+    shards, per_shard, n = 4, 4, 6
+    for s in range(shards):
+        path = tmp_path / f"train-{s:05d}-of-{shards:05d}.tfrecord"
+        with tf.io.TFRecordWriter(str(path)) as w:
+            for r in range(per_shard):
+                kps = np.zeros((NUM_KEYPOINTS, 3), np.float32)
+                kps[JOINT] = [40.0 + 8 * (s * per_shard + r), 128.0, 2]  # unique per record
+                rec = {
+                    "jpeg": jpeg.tobytes(),
+                    "image_id": s * per_shard + r,
+                    "bbox": [0.0, 0.0, 10.0, 10.0],
+                    "keypoints": kps.ravel().tolist(),
+                    "crop_to_orig": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                }
+                w.write(_to_example(tf, rec))
+    (tmp_path / "meta.json").write_text(json.dumps({"train": shards * per_shard}))
+
+    def peaks(ds):
+        _, y = next(iter(ds))
+        heat = np.asarray(y)[..., JOINT].reshape(n, -1)
+        return sorted(heat.argmax(axis=1).tolist())
+
+    cfg.train.batch_size = n
+    train = pipeline.build_dataset(cfg, "train", training=True, limit=n, augment=False)
+    val = pipeline.build_dataset(cfg, "train", training=False, limit=n)
+    expected = peaks(val)
+    assert len(set(expected)) == n
+    for _ in range(3):
+        assert peaks(train) == expected
