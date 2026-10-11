@@ -1,6 +1,8 @@
 # Runtime dependencies (pinned). Install: pip install -r requirements.txt
-# TensorFlow only provides the TFLite interpreter (tf.lite.Interpreter); tkinter ships with Python.
-tensorflow==2.20.0
+# TensorFlow runs SavedModels (GPU via the [and-cuda] wheels) and provides the TFLite interpreter;
+# tkinter ships with Python.
+tensorflow[and-cuda]==2.20.0
+PyYAML==6.0.3
 numpy==2.2.6
 opencv-python-headless==5.0.0.93
 Pillow==12.3.0

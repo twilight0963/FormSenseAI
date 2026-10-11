@@ -98,7 +98,7 @@ class Worker(threading.Thread):
 
 class App:
     def __init__(self, root: tk.Tk, cfg: HarnessConfig, estimator: PoseEstimator, source: Source):
-        self.root, self.cfg, self.source = root, cfg, source
+        self.root, self.cfg, self.source, self.estimator = root, cfg, source, estimator
         self.worker = Worker(cfg, estimator, source)
         self.show_skeleton = tk.BooleanVar(value=True)
         self.last: tuple[np.ndarray, Pose, float] | None = None
@@ -184,7 +184,7 @@ class App:
         if w.error:
             text = f"error: {w.error}"
         else:
-            parts = [self.source.label]
+            parts = [self.source.label, self.estimator.backend.label]
             if self.last is not None:
                 h, wd = self.last[0].shape[:2]
                 parts += [
@@ -210,7 +210,11 @@ class App:
 
 def run(cfg: HarnessConfig) -> None:
     print(f"loading model {cfg.model_path}")
-    estimator = PoseEstimator(cfg.model_path, cfg.flip_test, cfg.score_threshold, cfg.num_threads)
+    estimator = PoseEstimator(
+        cfg.model_path, cfg.flip_test, cfg.score_threshold, cfg.num_threads, cfg.heatmap_coords
+    )
+    h, w = estimator.input_hw
+    print(f"{estimator.backend.label}, input {h}x{w}, {'UDP' if estimator.udp else 'centre'} heatmaps")
     root = tk.Tk()
     root.withdraw()  # stay hidden while the file picker (if any) is open
     source = open_source(cfg, parent=root)

@@ -9,7 +9,8 @@ from pathlib import Path
 
 @dataclass
 class HarnessConfig:
-    model_path: str = "runs/20261006-164407/export/posenet_fp16.tflite"
+    # SavedModel directory (GPU) or .tflite file (CPU).
+    model_path: str = "pretrained/vitpose_b_simple/export/saved_model"
     use_webcam: bool = False
     webcam_index: int = 0
     video_path: str = ""  # empty → pick a file at startup
@@ -17,7 +18,8 @@ class HarnessConfig:
     flip_test: bool = True
     score_threshold: float = 0.3
     track: bool = True  # crop around the previous frame's pose instead of re-searching
-    num_threads: int = 4
+    num_threads: int = 4  # TFLite only
+    heatmap_coords: str = "auto"  # auto (from the run's config.yaml) | center | udp
     window_width: int = 1280
     window_height: int = 720
 
@@ -36,6 +38,6 @@ def load_config(path: str | Path) -> HarnessConfig:
     cfg.model_path = str(base / cfg.model_path)
     if cfg.video_path:
         cfg.video_path = str(base / Path(cfg.video_path).expanduser())
-    if not Path(cfg.model_path).is_file():
+    if not Path(cfg.model_path).exists():
         raise FileNotFoundError(f"model not found: {cfg.model_path} (set model_path in {path})")
     return cfg

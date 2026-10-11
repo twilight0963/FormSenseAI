@@ -1,6 +1,10 @@
-"""TFLite pose estimation: square crops, heatmap decoding and a two-pass smart crop.
+"""Pose estimation on an exported model: crops, heatmap decoding and a two-pass smart crop.
 
-The geometry and decoding code is copied from the ``training`` branch
+Runs either a TFLite model (CPU) or a SavedModel (GPU when available), e.g. the
+ViTPose export from the ``vitpose`` branch. Input size, heatmap stride and the
+heatmap cell convention are read from the model (and its run's ``config.yaml``).
+
+The geometry and decoding code is copied from the ``vitpose`` branch
 (``src/posenet/geometry.py``, ``decode.py``, ``keypoints.py``, ``inference.py``)
 so the harness runs the exported model without the training package.
 """
@@ -14,9 +18,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-# Model constants from the training run's config.yaml.
-INPUT_SIZE = 192
-HEATMAP_STRIDE = 4
+# Constants shared by every model trained with the posenet package.
 HEATMAP_SIGMA = 2.0
 BBOX_SCALE = 1.25
 
@@ -48,12 +50,12 @@ FLIP_INDEX = (0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15)
 # --- geometry (training: src/posenet/geometry.py) ---
 
 
-def square_crop_affine(center: np.ndarray, side: float, out_size: int) -> np.ndarray:
-    """2x3 affine (continuous coords) mapping a square region onto ``out_size``²."""
-    k = out_size / side
+def crop_affine(center: np.ndarray, size: tuple[float, float], out_size: tuple[int, int]) -> np.ndarray:
+    """2x3 affine (continuous coords) mapping a ``(w, h)`` region onto ``(out_w, out_h)``."""
+    kx, ky = out_size[0] / size[0], out_size[1] / size[1]
     cx, cy = float(center[0]), float(center[1])
     return np.array(
-        [[k, 0.0, out_size / 2.0 - k * cx], [0.0, k, out_size / 2.0 - k * cy]],
+        [[kx, 0.0, out_size[0] / 2.0 - kx * cx], [0.0, ky, out_size[1] / 2.0 - ky * cy]],
         dtype=np.float64,
     )
 
@@ -76,10 +78,10 @@ def _to_index_space(m: np.ndarray) -> np.ndarray:
     return out
 
 
-def crop_square(
-    image: np.ndarray, center: np.ndarray, side: float, out_size: int
+def crop_region(
+    image: np.ndarray, center: np.ndarray, size: tuple[float, float], out_size: tuple[int, int]
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Crop a square region around ``center`` and resample it to ``out_size``².
+    """Crop a ``(w, h)`` region around ``center`` and resample it to ``(out_w, out_h)``.
 
     Areas outside the image are zero-filled. When downscaling, the source patch
     is Gaussian pre-filtered to avoid aliasing.
@@ -88,19 +90,20 @@ def crop_square(
         (crop, affine) where ``affine`` maps original continuous coords to crop
         continuous coords.
     """
-    affine = square_crop_affine(center, side, out_size)
-    k = out_size / side
+    affine = crop_affine(center, size, out_size)
+    out_w, out_h = out_size
+    k = min(out_w / size[0], out_h / size[1])
     h, w = image.shape[:2]
 
     # Only touch the source pixels the crop needs (plus a filter margin).
     margin = 2 + int(np.ceil(3.0 / k))
-    half = side / 2.0
-    x0 = max(int(np.floor(center[0] - half)) - margin, 0)
-    y0 = max(int(np.floor(center[1] - half)) - margin, 0)
-    x1 = min(int(np.ceil(center[0] + half)) + margin, w)
-    y1 = min(int(np.ceil(center[1] + half)) + margin, h)
+    half_w, half_h = size[0] / 2.0, size[1] / 2.0
+    x0 = max(int(np.floor(center[0] - half_w)) - margin, 0)
+    y0 = max(int(np.floor(center[1] - half_h)) - margin, 0)
+    x1 = min(int(np.ceil(center[0] + half_w)) + margin, w)
+    y1 = min(int(np.ceil(center[1] + half_h)) + margin, h)
     if x1 <= x0 or y1 <= y0:
-        return np.zeros((out_size, out_size, image.shape[2]), image.dtype), affine
+        return np.zeros((out_h, out_w, image.shape[2]), image.dtype), affine
 
     patch = image[y0:y1, x0:x1]
     if k < 1.0:
@@ -114,12 +117,23 @@ def crop_square(
     crop = cv2.warpAffine(
         patch,
         _to_index_space(patch_affine),
-        (out_size, out_size),
+        (out_w, out_h),
         flags=cv2.INTER_LINEAR,
         borderMode=cv2.BORDER_CONSTANT,
         borderValue=0,
     )
     return crop, affine
+
+
+def bbox_to_region(bbox: np.ndarray, scale: float, aspect: float) -> tuple[np.ndarray, tuple[float, float]]:
+    """``[x, y, w, h]`` box → (centre, (w, h)) of the enlarged enclosing box with ``w / h == aspect``."""
+    x, y, w, h = (float(v) for v in bbox)
+    center = np.array([x + w / 2.0, y + h / 2.0], dtype=np.float64)
+    if w > aspect * h:
+        h = w / aspect
+    else:
+        w = h * aspect
+    return center, (w * scale, h * scale)
 
 
 # --- decoding (training: src/posenet/decode.py) ---
@@ -175,8 +189,13 @@ def _refine(heat: np.ndarray, xs: np.ndarray, ys: np.ndarray, sigma: float):
     return np.clip(dx, -1.0, 1.0), np.clip(dy, -1.0, 1.0)
 
 
-def decode_heatmaps(heat: np.ndarray, stride: int, sigma: float = 2.0, refine: bool = True):
+def decode_heatmaps(
+    heat: np.ndarray, stride: int, sigma: float = 2.0, refine: bool = True, udp: bool = False
+):
     """Decode (N, H, W, K) heatmaps.
+
+    ``udp``: the model was trained with UDP cells (corner cells align with corner
+    pixels, as ViTPose does) instead of cell ``j`` at ``(j + 0.5) * stride``.
 
     Returns:
         coords: (N, K, 2) continuous input-image coordinates.
@@ -194,8 +213,12 @@ def decode_heatmaps(heat: np.ndarray, stride: int, sigma: float = 2.0, refine: b
         dx, dy = _refine(heat, xs, ys, sigma)
         fx, fy = fx + dx, fy + dy
 
-    # Heatmap cell centre j sits at continuous coord j + 0.5.
-    coords = np.stack([(fx + 0.5) * stride, (fy + 0.5) * stride], axis=-1)
+    if udp:
+        sx, sy = (w * stride - 1.0) / (w - 1.0), (h * stride - 1.0) / (h - 1.0)
+        coords = np.stack([fx * sx + 0.5, fy * sy + 0.5], axis=-1)
+    else:
+        # Heatmap cell centre j sits at continuous coord j + 0.5.
+        coords = np.stack([(fx + 0.5) * stride, (fy + 0.5) * stride], axis=-1)
     return coords.astype(np.float32), scores.astype(np.float32)
 
 
@@ -207,17 +230,65 @@ def flip_heatmaps(heat: np.ndarray, flip_index) -> np.ndarray:
 # --- estimator ---
 
 
-def _make_interpreter(model_path: str, num_threads: int):
-    """Prefer the standalone LiteRT runtime; fall back to TensorFlow's deprecated copy."""
-    try:
-        from ai_edge_litert.interpreter import Interpreter
-    except ImportError:
+class TFLiteBackend:
+    """TFLite interpreter on the CPU; batches run one image at a time."""
+
+    def __init__(self, model_path: Path, num_threads: int):
+        try:
+            from ai_edge_litert.interpreter import Interpreter  # standalone LiteRT runtime
+        except ImportError:
+            import tensorflow as tf
+
+            Interpreter = tf.lite.Interpreter  # TensorFlow's deprecated copy
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self._interp = Interpreter(model_path=str(model_path), num_threads=num_threads)
+        self._interp.allocate_tensors()
+        inp = self._interp.get_input_details()[0]
+        self._input = inp["index"]
+        self._output = self._interp.get_output_details()[0]["index"]
+        self.input_hw = (int(inp["shape"][1]), int(inp["shape"][2]))
+        self.label = f"TFLite CPU ({num_threads} threads)"
+
+    def __call__(self, batch: np.ndarray) -> np.ndarray:
+        out = []
+        for image in batch:
+            self._interp.set_tensor(self._input, np.ascontiguousarray(image[None], np.float32))
+            self._interp.invoke()
+            out.append(self._interp.get_tensor(self._output).copy())
+        return np.concatenate(out)
+
+
+class SavedModelBackend:
+    """SavedModel (``model.export()``) on the GPU if TensorFlow sees one, else the CPU."""
+
+    def __init__(self, model_path: Path):
         import tensorflow as tf
 
-        Interpreter = tf.lite.Interpreter
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        return Interpreter(model_path=model_path, num_threads=num_threads)
+        gpus = tf.config.list_physical_devices("GPU")
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        self._tf = tf
+        self._model = tf.saved_model.load(str(model_path))
+        shape = self._model.serve.input_signature[0].shape
+        self.input_hw = (int(shape[1]), int(shape[2]))
+        self.label = "SavedModel GPU" if gpus else "SavedModel CPU"
+
+    def __call__(self, batch: np.ndarray) -> np.ndarray:
+        return self._model.serve(self._tf.constant(batch, self._tf.float32)).numpy()
+
+
+def heatmap_coords_for(model_path: Path) -> str:
+    """Read ``model.heatmap_coords`` from the training run's config.yaml, searching a few
+    directories up from the export (``<run>/export/saved_model``); "center" if absent."""
+    import yaml
+
+    for parent in list(model_path.resolve().parents)[:3]:
+        cfg_file = parent / "config.yaml"
+        if cfg_file.is_file():
+            model_cfg = (yaml.safe_load(cfg_file.read_text()) or {}).get("model", {})
+            return str(model_cfg.get("heatmap_coords", "center"))
+    return "center"
 
 
 @dataclass
@@ -231,11 +302,11 @@ class Pose:
 
 
 class PoseEstimator:
-    """Single-person pose estimator on an exported TFLite model.
+    """Single-person pose estimator on an exported model (TFLite file or SavedModel directory).
 
-    Without a previous pose it uses the two-pass smart crop from training:
-    pass 1 on the whole frame, pass 2 re-cropped around the confident keypoints.
-    With a previous pose (video tracking) it crops around that pose directly.
+    Without a previous pose it searches the frame with input-shaped windows
+    (several across a wide frame), keeps the most confident, then re-crops around
+    its keypoints. With a previous pose (video tracking) it crops around that pose.
     """
 
     def __init__(
@@ -244,31 +315,39 @@ class PoseEstimator:
         flip_test: bool = True,
         score_threshold: float = 0.3,
         num_threads: int = 4,
+        heatmap_coords: str = "auto",
     ):
+        model_path = Path(model_path)
         self.flip_test = flip_test
         self.score_threshold = score_threshold
-        self._interp = _make_interpreter(str(model_path), num_threads)
-        self._interp.allocate_tensors()
-        self._input = self._interp.get_input_details()[0]["index"]
-        self._output = self._interp.get_output_details()[0]["index"]
-        self._invoke(np.zeros((INPUT_SIZE, INPUT_SIZE, 3), np.float32))  # warm-up
+        self.backend = (
+            SavedModelBackend(model_path) if model_path.is_dir() else TFLiteBackend(model_path, num_threads)
+        )
+        self.input_hw = self.backend.input_hw
+        if heatmap_coords == "auto":
+            heatmap_coords = heatmap_coords_for(model_path)
+        if heatmap_coords not in ("center", "udp"):
+            raise ValueError(f"heatmap_coords must be auto, center or udp, not {heatmap_coords!r}")
+        self.udp = heatmap_coords == "udp"
+        warm = self.backend(np.zeros((1, *self.input_hw, 3), np.float32))  # also compiles the graph
+        self.stride = self.input_hw[0] // warm.shape[1]
 
-    def _invoke(self, crop: np.ndarray) -> np.ndarray:
-        self._interp.set_tensor(self._input, np.ascontiguousarray(crop[None], np.float32))
-        self._interp.invoke()
-        return self._interp.get_tensor(self._output).copy()
+    @property
+    def aspect(self) -> float:
+        """Input width / height."""
+        return self.input_hw[1] / self.input_hw[0]
 
     def heatmaps(self, crop: np.ndarray) -> np.ndarray:
-        """(S, S, 3) RGB crop → (1, H, W, K) heatmaps (flip-averaged if enabled)."""
-        heat = self._invoke(crop)
-        if self.flip_test:
-            mirrored = self._invoke(crop[:, ::-1])
-            heat = 0.5 * (heat + flip_heatmaps(mirrored, FLIP_INDEX))
-        return heat
+        """(H, W, 3) RGB crop → (1, H/s, W/s, K) heatmaps (flip-averaged if enabled)."""
+        if not self.flip_test:
+            return self.backend(crop[None])
+        both = self.backend(np.stack([crop, crop[:, ::-1]]))
+        return 0.5 * (both[:1] + flip_heatmaps(both[1:], FLIP_INDEX))
 
-    def _run_crop(self, image: np.ndarray, center: np.ndarray, side: float) -> Pose:
-        crop, affine = crop_square(image, center, side, INPUT_SIZE)
-        coords, scores = decode_heatmaps(self.heatmaps(crop), HEATMAP_STRIDE, HEATMAP_SIGMA)
+    def _run_crop(self, image: np.ndarray, center: np.ndarray, size: tuple[float, float]) -> Pose:
+        h, w = self.input_hw
+        crop, affine = crop_region(image, center, size, (w, h))
+        coords, scores = decode_heatmaps(self.heatmaps(crop), self.stride, HEATMAP_SIGMA, udp=self.udp)
         kps = apply_affine(coords[0].astype(np.float64), invert_affine(affine))
         return Pose(kps.astype(np.float32), scores[0])
 
@@ -281,9 +360,21 @@ class PoseEstimator:
         pts = pose.keypoints[confident]
         lo, hi = pts.min(axis=0), pts.max(axis=0)
         # Keypoints sit inside the person box (head top / feet extend past them).
-        side = float(np.max(hi - lo)) * BBOX_SCALE * 1.15
-        side = max(side, 0.1 * max(h, w))
-        return self._run_crop(image, (lo + hi) / 2.0, side)
+        size = np.maximum((hi - lo) * 1.15, 0.08 * max(h, w))
+        center = (lo + hi) / 2.0
+        return self._run_crop(
+            image, *bbox_to_region(np.array([*(center - size / 2), *size]), BBOX_SCALE, self.aspect)
+        )
+
+    def search_windows(self, h: int, w: int) -> list[tuple[np.ndarray, tuple[float, float]]]:
+        """Input-shaped (centre, size) windows covering the frame: one if the frame is no wider
+        than the input, otherwise full-height windows spread evenly across it."""
+        win_w = h * self.aspect
+        if w <= win_w * 1.2:
+            return [bbox_to_region(np.array([0.0, 0.0, w, h]), 1.0, self.aspect)]
+        n = int(np.ceil(w / win_w))
+        xs = np.linspace(win_w / 2.0, w - win_w / 2.0, n)
+        return [(np.array([x, h / 2.0]), (win_w, float(h))) for x in xs]
 
     def predict(self, image: np.ndarray, prev: Pose | None = None) -> Pose:
         """Estimate the pose in an RGB frame, optionally tracking from the previous frame's pose."""
@@ -293,6 +384,6 @@ class PoseEstimator:
                 return tracked
 
         h, w = image.shape[:2]
-        pose = self._run_crop(image, np.array([w / 2.0, h / 2.0]), float(max(h, w)))
+        pose = max((self._run_crop(image, c, s) for c, s in self.search_windows(h, w)), key=lambda p: p.score)
         refined = self._refit(image, pose)
         return refined if refined is not None and refined.score >= pose.score else pose

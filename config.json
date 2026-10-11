@@ -1,5 +1,5 @@
 {
-  "model_path": "runs/20261006-164407/export/posenet_fp16.tflite",
+  "model_path": "pretrained/vitpose_b_simple/export/saved_model",
   "use_webcam": false,
   "webcam_index": 0,
   "video_path": "",
@@ -8,6 +8,7 @@
   "score_threshold": 0.3,
   "track": true,
   "num_threads": 4,
+  "heatmap_coords": "auto",
   "window_width": 1280,
   "window_height": 720
 }
