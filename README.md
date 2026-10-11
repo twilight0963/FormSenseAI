@@ -2,7 +2,7 @@
 
 This branch holds the video harness for the gym posture detector. It is a work in progress.
 
-The pose estimation model (Stage 1) is [ViTPose-B](https://github.com/ViTAE-Transformer/ViTPose) (Apache-2.0), ported to Keras. The harness runs the **pretrained** ViTPose-B by default. A version fine-tuned on gym exercise footage (Penn Action) is also available; point `model_path` at its export to use it. The conversion, fine-tuning code and results for both are on the [`vitpose`](https://github.com/twilight0963/FormSenseAI/tree/vitpose) branch. The original from-scratch PoseNet is on the [`training`](https://github.com/twilight0963/FormSenseAI/tree/training) branch and still runs in the harness.
+The pose estimation model (Stage 1) is [ViTPose-B](https://github.com/ViTAE-Transformer/ViTPose) (Apache-2.0), ported to Keras. The harness runs the **pretrained** ViTPose-B by default. A version fine-tuned on gym exercise footage (Penn Action) is also available; point `model_path` at its export to use it. The conversion, fine-tuning code and results for both are on the [`vitpose`](https://github.com/twilight0963/FormSenseAI/tree/vitpose) branch. The original from-scratch PoseNet is on the [`init_posenet_train_test`](https://github.com/twilight0963/FormSenseAI/tree/init_posenet_train_test) branch and still runs in the harness.
 
 ## Video harness
 
