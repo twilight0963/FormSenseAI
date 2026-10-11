@@ -2,7 +2,7 @@
 
 This branch holds the video harness for the gym posture detector. It is a work in progress.
 
-The pose estimation model (Stage 1) is [ViTPose-B](https://github.com/ViTAE-Transformer/ViTPose) (Apache-2.0), ported to Keras and fine-tuned on gym exercise footage. Its conversion, fine-tuning code and results are on the [`vitpose`](https://github.com/twilight0963/FormSenseAI/tree/vitpose) branch. The original from-scratch PoseNet is on the [`training`](https://github.com/twilight0963/FormSenseAI/tree/training) branch and still runs in the harness.
+The pose estimation model (Stage 1) is [ViTPose-B](https://github.com/ViTAE-Transformer/ViTPose) (Apache-2.0), ported to Keras. The harness runs the **pretrained** ViTPose-B by default. A version fine-tuned on gym exercise footage (Penn Action) is also available; point `model_path` at its export to use it. The conversion, fine-tuning code and results for both are on the [`vitpose`](https://github.com/twilight0963/FormSenseAI/tree/vitpose) branch. The original from-scratch PoseNet is on the [`training`](https://github.com/twilight0963/FormSenseAI/tree/training) branch and still runs in the harness.
 
 ## Video harness
 
@@ -19,6 +19,19 @@ pip install -r requirements-dev.txt
 python -m harness                       # reads config.json
 python -m harness --config other.json
 ```
+
+### Getting the model
+
+Model files are not committed (`pretrained/` and `runs/` are gitignored), so produce them from the [`vitpose`](https://github.com/twilight0963/FormSenseAI/tree/vitpose) branch in the same repository folder:
+
+```bash
+git switch vitpose
+python scripts/convert_vitpose.py                                           # → pretrained/vitpose_b_simple/
+python -m posenet.export --model pretrained/vitpose_b_simple/model.keras --variants   # → .../export/saved_model
+git switch main
+```
+
+That creates the default `pretrained/vitpose_b_simple/export/saved_model`. For the fine-tuned model, train it as described on the `vitpose` branch. Then export `runs/<run>/best.keras` the same way and set `model_path` to `runs/<run>/export/saved_model`.
 
 ### config.json
 
