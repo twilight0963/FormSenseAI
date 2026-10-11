@@ -44,6 +44,8 @@ def main() -> None:
     saved = out_dir / "saved_model"
     model.export(str(saved))
     print(f"SavedModel → {saved}")
+    if not args.variants:  # TFLite calibration and checks need the val records; skip them
+        return
 
     val = build_dataset(cfg, "val", training=False)
     calib = [x.numpy() for x, _ in val.take(args.calibration_batches)]
