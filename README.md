@@ -1,5 +1,58 @@
 # Gym Posture Detector: Stage 1, Pose Estimation
 
+## Current model: ViTPose-B, fine-tuned for gym exercises
+
+Stage 1 now uses **[ViTPose-B](https://github.com/ViTAE-Transformer/ViTPose)** (simple decoder, Apache-2.0), ported to Keras from the open weights at [`usyd-community/vitpose-base-simple`](https://huggingface.co/usyd-community/vitpose-base-simple) and fine-tuned on gym footage. The from-scratch PoseNet described further down still works through the same code (`model.arch: posenet`).
+
+| | |
+|---|---|
+| Input | 256×192 (H×W) RGB in [0, 255]; ImageNet normalization happens inside the model |
+| Output | 64×48×17 COCO heatmaps (stride 4, UDP cell convention) |
+| Backbone | ViT-B/16: 12 pre-LN transformer blocks, 768 wide, on a 16×12 patch grid |
+| Head | ReLU → 4× bilinear upsample → 3×3 conv |
+| Size | 85.9M parameters |
+
+### Results
+
+| Model | COCO val AP | Penn gym test PCK@0.05 | PCK@0.1 | PCK@0.2 |
+|---|---|---|---|---|
+| PoseNet (from scratch) | 0.606 | — | — | — |
+| ViTPose-B, converted | 0.765 | 0.843 | 0.963 | 0.986 |
+| **ViTPose-B, fine-tuned** | **0.763** | **0.918** | **0.986** | **0.995** |
+
+- **COCO:** val2017 with ground-truth boxes and flip test (`posenet.evaluate`). The converted model's heatmaps match the Hugging Face PyTorch model to 1.4e-6.
+- **Penn gym test:** 15,566 frames from 545 held-out videos (`posenet.evaluate_exercise`). PCK counts a keypoint within `t × max(box w, h)` of the label. PCK@0.2, the usual Penn metric, is already saturated by the converted model, so PCK@0.05 is the one to watch.
+- **Fine-tuned PCK@0.05 by exercise:** squat 0.838 → 0.946, bench press 0.758 → 0.883, push-up 0.840 → 0.926, sit-up 0.760 → 0.862, clean & jerk 0.860 → 0.916, pull-up 0.907 → 0.930, jumping jacks 0.918 → 0.943. Hips improve most (≈0.67 → 0.81), partly because the model learns Penn's hip placement, which differs from COCO's.
+- **Speed (RTX 3060 Laptop):** 4.7 ms per pass in fp16 and 5.6 ms in fp32 at batch 1, against 95 ms on the CPU. In the video harness, with tracking and flip test, a frame takes 18 ms.
+
+### Reproduce
+
+```bash
+python scripts/convert_vitpose.py                       # HF weights → pretrained/vitpose_b_simple/{model.keras,config.yaml}
+python -m posenet.data.build_tfrecords --config configs/vitpose_finetune.yaml   # COCO 3:4 crops → data/tfrecords_hw
+python -m posenet.data.exercise --config configs/vitpose_finetune.yaml \
+    --source penn --root data/penn_action/Penn_Action --out data/exercise/penn
+python -m posenet.train --config configs/vitpose_finetune.yaml --init pretrained/vitpose_b_simple/model.keras
+python -m posenet.evaluate_exercise --model runs/<run>/best.keras    # Penn test PCK
+python -m posenet.evaluate --model runs/<run>/best.keras             # COCO AP
+python -m posenet.export --model runs/<run>/best.keras --variants    # SavedModel for the video harness
+```
+
+- **Penn Action** ([download](https://www.cis.upenn.edu/~kostas/Penn_Action.tar.gz), about 3 GB; please cite Zhang, Zhu & Derpanis, ICCV 2013):
+  - Only the 7 gym actions are used: squat, bench press, push-up, pull-up, sit-up, clean & jerk and jumping jacks.
+  - Every 3rd frame is kept, giving 13.7k train, 1.7k val and 15.6k test frames.
+  - Splits follow the official train/test split by video; val is 10% of the train videos.
+  - Penn's left/right labels are mirrored relative to COCO, and the builder corrects this.
+  - Penn's head point and its invisible joints are left unlabeled.
+- **Other sources:** any COCO-keypoints JSON (a CVAT export, InfiniteRep, your own clips) goes through `--source coco-json --ann file.json --images dir/`. It is split by video (the image's parent folder) and listed under `data.finetune_dirs`.
+- **Fine-tuning recipe:**
+  - Each batch is 70% exercise and 30% COCO crops, to avoid forgetting general poses.
+  - AdamW at lr 5e-5, weight decay 0.1, layer-wise LR decay 0.75; batch 16 with mixed precision and XLA (about 4.4 GB of VRAM).
+  - Early stopping on exercise val PCK. The reference run picked epoch 5 and stopped at 10, at about 4 min per epoch.
+  - `--freeze-blocks N` reduces memory if the GPU is shared.
+
+## Original PoseNet (from scratch)
+
 This is a lightweight, real-time **single-person 2D pose estimator** written in TensorFlow/Keras. The CNN is built from scratch out of `Conv2D`, `DepthwiseConv2D`, `BatchNormalization` and similar layers, with no pretrained backbones. It is trained on **COCO Keypoints 2017** and predicts 17 keypoints.
 
 | | |
@@ -137,20 +190,21 @@ The exported `.tflite` models take one `(1, 192, 192, 3)` float32 RGB crop with 
 ## Development
 
 ```bash
-pytest          # geometry, augmentation alignment, heatmap/decoding, model, loss/metrics, GPU regression
+pytest          # geometry, augmentation alignment, heatmap/decoding (centre + UDP), models, converter, exercise data, GPU regression
 ruff check .
 ```
 
 ## Layout
 
 ```
-configs/default.yaml     all hyperparameters
-scripts/                 COCO download, sample visualization
+configs/default.yaml     PoseNet hyperparameters
+configs/vitpose_finetune.yaml  ViTPose fine-tuning (3:4 crops, UDP, exercise/COCO mix)
+scripts/                 COCO download, sample visualization, convert_vitpose.py
 src/posenet/
   geometry.py            crop/affine utilities (one coordinate convention everywhere)
-  data/                  COCO parsing, TFRecord builder, tf.data pipeline, heatmaps
-  model/                 layer blocks + network
+  data/                  COCO parsing, TFRecord builder, exercise datasets, tf.data pipeline, heatmaps
+  model/                 build_model factory, PoseNet (network.py), ViTPose (vitpose.py)
   losses.py metrics.py decode.py inference.py
-  train.py evaluate.py infer.py export.py benchmark.py
+  train.py evaluate.py evaluate_exercise.py infer.py export.py benchmark.py
 tests/
 ```
