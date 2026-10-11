@@ -34,7 +34,10 @@ def open_source(cfg: HarnessConfig, parent=None) -> Source | None:
     if not path or not Path(path).is_file():
         if path:
             print(f"warning: video not found: {path}")
-        path = filedialog.askopenfilename(parent=parent, title="Choose a video", filetypes=VIDEO_TYPES)
+        start = cfg.video_dir if cfg.video_dir and Path(cfg.video_dir).is_dir() else None
+        path = filedialog.askopenfilename(
+            parent=parent, title="Choose a video", filetypes=VIDEO_TYPES, initialdir=start
+        )
         if not path:
             return None
 

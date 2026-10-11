@@ -2,7 +2,7 @@
 
 This branch holds the video harness for the gym posture detector. It is a work in progress.
 
-The pose estimation model (Stage 1) is [ViTPose-B](https://github.com/ViTAE-Transformer/ViTPose) (Apache-2.0), ported to Keras. The harness runs the **pretrained** ViTPose-B by default. A version fine-tuned on gym exercise footage (Penn Action) is also available; point `model_path` at its export to use it. The conversion, fine-tuning code and results for both are on the [`vitpose`](https://github.com/twilight0963/FormSenseAI/tree/vitpose) branch. The original from-scratch PoseNet is on the [`init_posenet_train_test`](https://github.com/twilight0963/FormSenseAI/tree/init_posenet_train_test) branch and still runs in the harness.
+The pose estimation model (Stage 1) is [ViTPose-B](https://github.com/ViTAE-Transformer/ViTPose) (Apache-2.0), ported to Keras. The harness runs the version **fine-tuned on gym exercise footage** (Penn Action) by default; the pretrained ViTPose-B is also available by pointing `model_path` at its export. The conversion, fine-tuning code and results for both are on the [`vitpose`](https://github.com/twilight0963/FormSenseAI/tree/vitpose) branch. The original from-scratch PoseNet is on the [`init_posenet_train_test`](https://github.com/twilight0963/FormSenseAI/tree/init_posenet_train_test) branch and still runs in the harness.
 
 ## Video harness
 
@@ -31,16 +31,17 @@ python -m posenet.export --model pretrained/vitpose_b_simple/model.keras --varia
 git switch main
 ```
 
-That creates the default `pretrained/vitpose_b_simple/export/saved_model`. For the fine-tuned model, train it as described on the `vitpose` branch. Then export `runs/<run>/best.keras` the same way and set `model_path` to `runs/<run>/export/saved_model`.
+That creates the pretrained `pretrained/vitpose_b_simple/export/saved_model`. The default fine-tuned model comes from training as described on the `vitpose` branch. Export `runs/<run>/best.keras` the same way; the default config points at the reference run, `runs/20261011-104645/export/saved_model`, so set `model_path` to your own `runs/<run>/export/saved_model`.
 
 ### config.json
 
 | Key | Default | Meaning |
 |---|---|---|
-| `model_path` | `pretrained/vitpose_b_simple/export/saved_model` | SavedModel directory or `.tflite` file (relative paths resolve against the config file) |
+| `model_path` | `runs/20261011-104645/export/saved_model` | SavedModel directory or `.tflite` file (relative paths resolve against the config file) |
 | `use_webcam` | `false` | Use a camera; falls back to the video if the camera can't be opened |
 | `webcam_index` | `0` | OpenCV camera index |
 | `video_path` | `""` | Video to play; empty or missing opens a file picker at startup |
+| `video_dir` | `outputs/Vids` | Folder the file picker opens in (falls back to the default if it doesn't exist) |
 | `loop_video` | `true` | Restart the video when it ends |
 | `flip_test` | `true` | Average with a mirrored pass (more accurate, twice the cost) |
 | `score_threshold` | `0.3` | Minimum keypoint score to draw |

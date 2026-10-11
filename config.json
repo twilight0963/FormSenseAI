@@ -1,8 +1,9 @@
 {
-  "model_path": "pretrained/vitpose_b_simple/export/saved_model",
+  "model_path": "runs/20261011-104645/export/saved_model",
   "use_webcam": false,
   "webcam_index": 0,
   "video_path": "",
+  "video_dir": "outputs/Vids",
   "loop_video": true,
   "flip_test": true,
   "score_threshold": 0.3,

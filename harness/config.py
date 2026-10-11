@@ -10,10 +10,11 @@ from pathlib import Path
 @dataclass
 class HarnessConfig:
     # SavedModel directory (GPU) or .tflite file (CPU).
-    model_path: str = "pretrained/vitpose_b_simple/export/saved_model"
+    model_path: str = "runs/20261011-104645/export/saved_model"
     use_webcam: bool = False
     webcam_index: int = 0
     video_path: str = ""  # empty → pick a file at startup
+    video_dir: str = "outputs/Vids"  # where the file picker opens (if it exists)
     loop_video: bool = True
     flip_test: bool = True
     score_threshold: float = 0.3
@@ -38,6 +39,8 @@ def load_config(path: str | Path) -> HarnessConfig:
     cfg.model_path = str(base / cfg.model_path)
     if cfg.video_path:
         cfg.video_path = str(base / Path(cfg.video_path).expanduser())
+    if cfg.video_dir:
+        cfg.video_dir = str(base / Path(cfg.video_dir).expanduser())
     if not Path(cfg.model_path).exists():
         raise FileNotFoundError(f"model not found: {cfg.model_path} (set model_path in {path})")
     return cfg

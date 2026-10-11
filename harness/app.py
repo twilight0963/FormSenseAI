@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import os
 import queue
 import threading
 import time
@@ -19,6 +21,27 @@ from harness.pose import Pose, PoseEstimator
 from harness.source import Source, open_source
 
 POLL_MS = 10
+
+# TensorFlow's C++ info/warning logs; set before TensorFlow is first imported (lazily, in pose.py).
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+
+
+@contextlib.contextmanager
+def quiet_stderr():
+    """Send file descriptor 2 to /dev/null while TensorFlow initializes.
+
+    absl writes a few start-up lines straight to stderr regardless of
+    TF_CPP_MIN_LOG_LEVEL. stderr is restored before any exception propagates,
+    so a failed load still prints its traceback.
+    """
+    saved = os.dup(2)
+    try:
+        with open(os.devnull, "w") as null:
+            os.dup2(null.fileno(), 2)
+        yield
+    finally:
+        os.dup2(saved, 2)
+        os.close(saved)
 
 
 class Worker(threading.Thread):
@@ -210,11 +233,10 @@ class App:
 
 def run(cfg: HarnessConfig) -> None:
     print(f"loading model {cfg.model_path}")
-    estimator = PoseEstimator(
-        cfg.model_path, cfg.flip_test, cfg.score_threshold, cfg.num_threads, cfg.heatmap_coords
-    )
-    h, w = estimator.input_hw
-    print(f"{estimator.backend.label}, input {h}x{w}, {'UDP' if estimator.udp else 'centre'} heatmaps")
+    with quiet_stderr():
+        estimator = PoseEstimator(
+            cfg.model_path, cfg.flip_test, cfg.score_threshold, cfg.num_threads, cfg.heatmap_coords
+        )
     root = tk.Tk()
     root.withdraw()  # stay hidden while the file picker (if any) is open
     source = open_source(cfg, parent=root)
