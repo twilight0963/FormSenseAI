@@ -13,24 +13,56 @@ class DataConfig:
     coco_root: str = "data/coco"
     tfrecord_dir: str = "data/tfrecords"
     crop_size: int = 256
+    # [height, width] of the stored crop; overrides crop_size for non-square models.
+    crop_hw: list[int] | None = None
     bbox_scale: float = 1.25
     min_keypoints: int = 5
     min_bbox_area: float = 1024.0
     num_shards_train: int = 64
     num_shards_val: int = 8
     jpeg_quality: int = 95
+    # Fine-tuning: exercise record dirs (posenet.data.exercise). When set, training batches mix
+    # them with the COCO records at finetune_ratio, and validation uses their val splits.
+    finetune_dirs: list[str] = field(default_factory=list)
+    finetune_ratio: float = 0.7
+
+    @property
+    def crop_shape(self) -> tuple[int, int]:
+        return tuple(self.crop_hw) if self.crop_hw else (self.crop_size, self.crop_size)
 
 
 @dataclass
 class ModelConfig:
+    arch: str = "posenet"  # posenet | vitpose_s | vitpose_b | vitpose_l
     input_size: int = 192
+    # [height, width] of the model input; overrides input_size for non-square models.
+    input_hw: list[int] | None = None
     heatmap_stride: int = 4
+    # Heatmap cell ↔ input pixel convention: "center" (cell j at (j + 0.5) * stride)
+    # or "udp" (unbiased data processing: corner cells align with corner pixels).
+    heatmap_coords: str = "center"
     width_multiplier: float = 1.0
     decoder_channels: int = 96
 
     @property
-    def heatmap_size(self) -> int:
-        return self.input_size // self.heatmap_stride
+    def input_shape(self) -> tuple[int, int]:
+        """(height, width) of the model input."""
+        return tuple(self.input_hw) if self.input_hw else (self.input_size, self.input_size)
+
+    @property
+    def heatmap_shape(self) -> tuple[int, int]:
+        h, w = self.input_shape
+        return h // self.heatmap_stride, w // self.heatmap_stride
+
+    @property
+    def aspect(self) -> float:
+        """Input width / height."""
+        h, w = self.input_shape
+        return w / h
+
+    @property
+    def udp(self) -> bool:
+        return self.heatmap_coords == "udp"
 
 
 @dataclass
@@ -59,6 +91,8 @@ class TrainConfig:
     jit_compile: bool = True
     steps_per_execution: int = 32
     shuffle_buffer: int = 8192
+    freeze_blocks: int = 0  # vitpose: keep the patch embedding and the first N blocks frozen
+    layer_decay: float = 1.0  # vitpose: per-block LR multiplier (block i gets decay^(depth - i))
     early_stopping_patience: int = 20
     seed: int = 42
     output_dir: str = "runs"

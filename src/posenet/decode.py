@@ -56,8 +56,13 @@ def _refine(heat: np.ndarray, xs: np.ndarray, ys: np.ndarray, sigma: float):
     return np.clip(dx, -1.0, 1.0), np.clip(dy, -1.0, 1.0)
 
 
-def decode_heatmaps(heat: np.ndarray, stride: int, sigma: float = 2.0, refine: bool = True):
+def decode_heatmaps(
+    heat: np.ndarray, stride: int, sigma: float = 2.0, refine: bool = True, udp: bool = False
+):
     """Decode (N, H, W, K) heatmaps.
+
+    ``udp`` selects the cell convention the model was trained with (see
+    ``posenet.data.heatmaps.cell_scale``).
 
     Returns:
         coords: (N, K, 2) continuous input-image coordinates.
@@ -75,8 +80,12 @@ def decode_heatmaps(heat: np.ndarray, stride: int, sigma: float = 2.0, refine: b
         dx, dy = _refine(heat, xs, ys, sigma)
         fx, fy = fx + dx, fy + dy
 
-    # Heatmap cell centre j sits at continuous coord j + 0.5.
-    coords = np.stack([(fx + 0.5) * stride, (fy + 0.5) * stride], axis=-1)
+    if udp:
+        sx, sy = (w * stride - 1.0) / (w - 1.0), (h * stride - 1.0) / (h - 1.0)
+        coords = np.stack([fx * sx + 0.5, fy * sy + 0.5], axis=-1)
+    else:
+        # Heatmap cell centre j sits at continuous coord j + 0.5.
+        coords = np.stack([(fx + 0.5) * stride, (fy + 0.5) * stride], axis=-1)
     return coords.astype(np.float32), scores.astype(np.float32)
 
 

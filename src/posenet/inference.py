@@ -11,9 +11,9 @@ import tensorflow as tf
 
 from posenet.config import Config
 from posenet.decode import decode_heatmaps, flip_heatmaps
-from posenet.geometry import apply_affine, crop_square, invert_affine
+from posenet.geometry import apply_affine, bbox_to_region, crop_region, invert_affine
 from posenet.keypoints import FLIP_INDEX
-from posenet.model.network import build_posenet
+from posenet.model import build_model
 
 
 def load_config_for(model_path: str | Path) -> Config:
@@ -32,7 +32,7 @@ def load_inference_model(model_path: str | Path, cfg: Config, dtype: str = "floa
     previous = keras.mixed_precision.global_policy()
     keras.mixed_precision.set_global_policy("mixed_float16" if dtype == "float16" else "float32")
     try:
-        model = build_posenet(cfg.model)
+        model = build_model(cfg.model)
     finally:
         keras.mixed_precision.set_global_policy(previous)
     model.set_weights(trained.get_weights())
@@ -75,7 +75,7 @@ class PoseEstimator:
         return cls(load_inference_model(model_path, cfg), cfg, **kwargs)
 
     def heatmaps(self, images: np.ndarray) -> np.ndarray:
-        """(N, S, S, 3) RGB uint8/float → (N, H, W, K) heatmaps (flip-averaged if enabled)."""
+        """(N, H, W, 3) RGB uint8/float → (N, H/s, W/s, K) heatmaps (flip-averaged if enabled)."""
         x = tf.convert_to_tensor(images, tf.float32)
         if self.flip_test:
             both = self._predict(tf.concat([x, x[:, :, ::-1, :]], axis=0)).numpy()
@@ -83,11 +83,17 @@ class PoseEstimator:
             return 0.5 * (both[:n] + flip_heatmaps(both[n:], FLIP_INDEX))
         return self._predict(x).numpy()
 
-    def _run_crop(self, image: np.ndarray, center: np.ndarray, side: float) -> Pose:
-        size = self.cfg.model.input_size
-        crop, affine = crop_square(image, center, side, size)
-        heat = self.heatmaps(crop[None])
-        coords, scores = decode_heatmaps(heat, self.cfg.model.heatmap_stride, self.cfg.train.heatmap_sigma)
+    def decode(self, heat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """(N, H, W, K) heatmaps → (N, K, 2) input-crop coords and (N, K) scores."""
+        m = self.cfg.model
+        return decode_heatmaps(heat, m.heatmap_stride, self.cfg.train.heatmap_sigma, udp=m.udp)
+
+    def _run_crop(self, image: np.ndarray, bbox: np.ndarray, scale: float) -> Pose:
+        """Crop the ``[x, y, w, h]`` box, extended to the input aspect and enlarged by ``scale``."""
+        h, w = self.cfg.model.input_shape
+        center, size = bbox_to_region(bbox, scale, w / h)
+        crop, affine = crop_region(image, center, size, (w, h))
+        coords, scores = self.decode(self.heatmaps(crop[None]))
         kps = apply_affine(coords[0].astype(np.float64), invert_affine(affine))
         return Pose(kps.astype(np.float32), scores[0])
 
@@ -100,17 +106,16 @@ class PoseEstimator:
         h, w = image.shape[:2]
         scale = self.cfg.data.bbox_scale
         if bbox is not None:
-            x, y, bw, bh = (float(v) for v in bbox)
-            return self._run_crop(image, np.array([x + bw / 2, y + bh / 2]), max(bw, bh) * scale)
+            return self._run_crop(image, np.asarray(bbox, np.float64), scale)
 
-        pose = self._run_crop(image, np.array([w / 2.0, h / 2.0]), float(max(h, w)))
+        pose = self._run_crop(image, np.array([0.0, 0.0, w, h]), 1.0)
         confident = pose.scores >= self.score_threshold
         if confident.sum() < 4:
             return pose
         pts = pose.keypoints[confident]
         lo, hi = pts.min(axis=0), pts.max(axis=0)
         # Keypoints sit inside the person box (head top / feet extend past them).
-        side = float(np.max(hi - lo)) * scale * 1.15
-        side = max(side, 0.1 * max(h, w))
-        refined = self._run_crop(image, (lo + hi) / 2.0, side)
+        size = np.maximum((hi - lo) * 1.15, 0.1 * max(h, w))
+        center = (lo + hi) / 2.0
+        refined = self._run_crop(image, np.array([*(center - size / 2.0), *size]), scale)
         return refined if refined.score >= pose.score else pose

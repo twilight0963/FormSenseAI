@@ -1,0 +1,38 @@
+# Fine-tune the converted ViTPose-B (scripts/convert_vitpose.py) on exercise footage mixed with COCO.
+#   python -m posenet.train --config configs/vitpose_finetune.yaml --init pretrained/vitpose_b_simple/model.keras
+data:
+  coco_root: data/coco
+  tfrecord_dir: data/tfrecords_hw        # COCO 3:4 crops (build_tfrecords with this config)
+  crop_hw: [320, 240]                    # 1.25x context around the 256x192 input window
+  bbox_scale: 1.25
+  finetune_dirs: [data/exercise/penn]    # posenet.data.exercise output; val split drives checkpoints
+  finetune_ratio: 0.7                    # share of exercise crops per batch (rest is COCO)
+
+model:
+  arch: vitpose_b
+  input_hw: [256, 192]
+  heatmap_stride: 4
+  heatmap_coords: udp                    # ViTPose was trained with UDP heatmaps
+
+augment:
+  scale_min: 0.75
+  scale_max: 1.25
+  rotation_deg: 30.0
+  rotation_prob: 0.6
+  translate_frac: 0.05
+  flip_prob: 0.5
+
+train:
+  batch_size: 16
+  epochs: 20
+  warmup_epochs: 1
+  learning_rate: 5.0e-5
+  weight_decay: 0.1
+  layer_decay: 0.75
+  freeze_blocks: 0
+  heatmap_sigma: 2.0
+  mixed_precision: true
+  jit_compile: true
+  steps_per_execution: 16
+  shuffle_buffer: 4096
+  early_stopping_patience: 5

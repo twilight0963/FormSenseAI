@@ -61,3 +61,39 @@ def test_image_flip_equals_coordinate_flip():
     flipped = tf.reverse(img, axis=[2]).numpy()
     x = np.argwhere(flipped[0, 2, :, 0])[0, 0] + 0.5
     assert x == 8 - 1.5
+
+
+def test_udp_rectangular_render_decode_roundtrip():
+    rng = np.random.default_rng(2)
+    h, w = 256, 192
+    kps = rng.uniform(8.0, [w - 8.0, h - 8.0], size=(3, 17, 2)).astype(np.float32)
+    heat = render_heatmaps(
+        kps, np.ones(kps.shape[:2]), (h // STRIDE, w // STRIDE), STRIDE, SIGMA, udp=True
+    ).numpy()
+    assert heat.shape == (3, 64, 48, 17)
+    coords, _ = decode_heatmaps(heat, STRIDE, SIGMA, udp=True)
+    assert np.abs(coords - kps).max() < 0.5
+    # Decoding UDP heatmaps with the centre convention is biased by up to ~1.5 px.
+    wrong, _ = decode_heatmaps(heat, STRIDE, SIGMA, udp=False)
+    assert np.abs(wrong - kps).max() > 1.0
+
+
+def test_udp_corner_cells_align_with_corner_pixels():
+    kps = np.array([[[0.5, 0.5], [191.5, 255.5]]], np.float32)  # centres of the corner pixels
+    heat = render_heatmaps(kps, np.ones((1, 2)), (64, 48), STRIDE, SIGMA, udp=True).numpy()
+    assert np.unravel_index(heat[0, ..., 0].argmax(), (64, 48)) == (0, 0)
+    assert np.unravel_index(heat[0, ..., 1].argmax(), (64, 48)) == (63, 47)
+    np.testing.assert_allclose(heat.max(axis=(1, 2)), 1.0, atol=1e-6)
+
+
+def test_udp_flip_heatmaps_matches_flipped_keypoints():
+    rng = np.random.default_rng(3)
+    kps = rng.uniform(12.0, [180.0, 244.0], size=(2, 17, 2)).astype(np.float32)
+    w = np.ones(kps.shape[:2], np.float32)
+    flipped = kps.copy()
+    flipped[..., 0] = 192 - flipped[..., 0]
+    flipped = flipped[:, list(FLIP_INDEX)]
+    shape = (64, 48)
+    heat = render_heatmaps(kps, w, shape, STRIDE, SIGMA, udp=True).numpy()
+    heat_flipped = render_heatmaps(flipped, w, shape, STRIDE, SIGMA, udp=True).numpy()
+    np.testing.assert_allclose(flip_heatmaps(heat_flipped, FLIP_INDEX), heat, atol=1e-5)

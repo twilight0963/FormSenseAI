@@ -118,3 +118,46 @@ def test_limit_selects_same_records_in_train_and_eval(tmp_path):
     assert len(set(expected)) == n
     for _ in range(3):
         assert peaks(train) == expected
+
+
+def test_rectangular_records(tmp_path, monkeypatch):
+    """3:4 crops (ViTPose): centre window, augmentation and UDP targets keep keypoints aligned."""
+    monkeypatch.setattr(pipeline, "_photometric", lambda cfg, img: img)
+    cfg = Config()
+    cfg.data.tfrecord_dir = str(tmp_path)
+    cfg.data.crop_hw = [320, 240]
+    cfg.model.input_hw = [256, 192]
+    cfg.model.heatmap_coords = "udp"
+    cfg.train.batch_size = 2
+    ys, xs = np.mgrid[0:320, 0:240] + 0.5
+    bx, by = 100.0, 190.0
+    blob = np.exp(-((xs - bx) ** 2 + (ys - by) ** 2) / (2 * 4.0**2))
+    img = np.repeat((blob * 255).astype(np.uint8)[..., None], 3, axis=-1)
+    _, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 100])
+    kps = np.zeros((NUM_KEYPOINTS, 3), np.float32)
+    kps[JOINT] = [bx, by, 2]
+    rec = {
+        "jpeg": jpeg.tobytes(),
+        "image_id": 1,
+        "bbox": [0.0, 0.0, 10.0, 10.0],
+        "keypoints": kps.ravel().tolist(),
+        "crop_to_orig": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+    }
+    with tf.io.TFRecordWriter(str(tmp_path / "train-00000-of-00001.tfrecord")) as w:
+        for _ in range(4):
+            w.write(_to_example(tf, rec))
+    (tmp_path / "meta.json").write_text(json.dumps({"train": 4}))
+
+    ex = pipeline.parse_example(next(iter(tf.data.TFRecordDataset(pipeline.shard_files(cfg, "train")))))
+    image, xy, _ = pipeline.center_transform(cfg, ex)
+    assert image.shape == (256, 192, 3)
+    np.testing.assert_allclose(xy.numpy()[JOINT], [bx - 24.0, by - 32.0])
+    np.testing.assert_allclose(_centroid(image.numpy()), xy.numpy()[JOINT], atol=0.05)
+    tf.random.set_seed(1)
+    for _ in range(10):
+        image, xy, w = pipeline.train_transform(cfg, ex)
+        label = int(np.flatnonzero(w.numpy())[0])
+        np.testing.assert_allclose(_centroid(image.numpy()), xy.numpy()[label], atol=0.35)
+
+    x, y = next(iter(pipeline.build_dataset(cfg, "train", training=True, augment=False)))
+    assert x.shape == (2, 256, 192, 3) and y.shape == (2, 64, 48, 2 * NUM_KEYPOINTS)

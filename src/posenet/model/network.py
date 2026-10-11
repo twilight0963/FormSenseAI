@@ -34,7 +34,7 @@ def build_posenet(cfg: ModelConfig, num_keypoints: int = NUM_KEYPOINTS) -> keras
     alpha = cfg.width_multiplier
     dec = cfg.decoder_channels
 
-    inputs = keras.Input((cfg.input_size, cfg.input_size, 3), name="image")
+    inputs = keras.Input((*cfg.input_shape, 3), name="image")
     x = layers.Rescaling(1.0 / 127.5, offset=-1.0, name="normalize")(inputs)
     x = conv_bn_act(x, make_divisible(32 * alpha), stride=2, name="stem")
 

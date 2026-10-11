@@ -6,6 +6,9 @@ numpy==2.2.6
 opencv-python-headless==5.0.0.93
 pycocotools==2.0.11
 PyYAML==6.0.3
+safetensors==0.8.0
+huggingface_hub==2.2.0
+scipy==1.15.3
 tqdm==4.70.1
 matplotlib==3.10.9
 -e .

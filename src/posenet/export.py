@@ -29,10 +29,11 @@ def run_tflite(path: Path, images: np.ndarray) -> np.ndarray:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Export PoseNet.")
+    parser = argparse.ArgumentParser(description="Export a pose model.")
     parser.add_argument("--model", required=True)
     parser.add_argument("--out-dir", help="defaults to <run>/export")
     parser.add_argument("--calibration-batches", type=int, default=8)
+    parser.add_argument("--variants", nargs="*", default=["fp16", "int8"], choices=["fp16", "int8"])
     args = parser.parse_args()
 
     cfg = load_config_for(args.model)
@@ -55,14 +56,15 @@ def main() -> None:
                 yield [img[None].astype(np.float32)]
 
     variants = {"fp16": tf.float16, "int8": tf.int8}
-    for name, dtype in variants.items():
+    for name in args.variants:
+        dtype = variants[name]
         conv = tf.lite.TFLiteConverter.from_saved_model(str(saved))
         conv.optimizations = [tf.lite.Optimize.DEFAULT]
         if dtype == tf.float16:
             conv.target_spec.supported_types = [tf.float16]
         else:
             conv.representative_dataset = representative
-        path = out_dir / f"posenet_{name}.tflite"
+        path = out_dir / f"{cfg.model.arch}_{name}.tflite"
         path.write_bytes(conv.convert())
 
         pred = run_tflite(path, reference_in)

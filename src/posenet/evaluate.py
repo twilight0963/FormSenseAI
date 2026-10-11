@@ -16,7 +16,6 @@ from pycocotools.cocoeval import COCOeval
 from tqdm import tqdm
 
 from posenet.data.pipeline import build_eval_dataset, num_examples
-from posenet.decode import decode_heatmaps
 from posenet.geometry import apply_affine
 from posenet.inference import PoseEstimator
 
@@ -36,7 +35,7 @@ def predict_val(estimator: PoseEstimator, batch_size: int) -> list[dict]:
     with tqdm(total=total, desc="val", unit="inst") as bar:
         for images, meta in build_eval_dataset(cfg, batch_size):
             heat = estimator.heatmaps(images.numpy())
-            coords, scores = decode_heatmaps(heat, cfg.model.heatmap_stride, cfg.train.heatmap_sigma)
+            coords, scores = estimator.decode(heat)
             offsets = meta["offset"].numpy()
             mats = meta["crop_to_orig"].numpy().reshape(-1, 2, 3).astype(np.float64)
             for i, image_id in enumerate(meta["image_id"].numpy()):

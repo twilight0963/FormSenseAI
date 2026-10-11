@@ -17,7 +17,7 @@ import tensorflow as tf
 
 from posenet.config import Config
 from posenet.inference import load_config_for, load_inference_model
-from posenet.model.network import build_posenet
+from posenet.model import build_model
 
 
 def _time(fn, iters: int, warmup: int = 10) -> np.ndarray:
@@ -36,22 +36,22 @@ def _report(label: str, ms: np.ndarray, batch: int) -> None:
     print(f"{label:<28} p50 {p50:7.2f} ms  p95 {p95:7.2f} ms  {batch * 1000 / p50:8.1f} img/s")
 
 
-def bench_keras(model, size: int, batch: int, device: str, iters: int) -> np.ndarray:
+def bench_keras(model, size: tuple[int, int], batch: int, device: str, iters: int) -> np.ndarray:
     with tf.device(device):
         # XLA cannot read variables placed on another device, so give the
         # benchmark its own copy of the weights on the target device.
         local = keras.models.clone_model(model)
         local.set_weights(model.get_weights())
-        x = tf.random.uniform((batch, size, size, 3), 0, 255)
+        x = tf.random.uniform((batch, *size, 3), 0, 255)
         fn = tf.function(local, jit_compile=True)
         return _time(lambda: fn(x).numpy(), iters)
 
 
-def bench_tflite(path: Path, size: int, iters: int, threads: int) -> np.ndarray:
+def bench_tflite(path: Path, size: tuple[int, int], iters: int, threads: int) -> np.ndarray:
     interp = tf.lite.Interpreter(model_path=str(path), num_threads=threads)
     interp.allocate_tensors()
     inp = interp.get_input_details()[0]
-    x = np.random.default_rng(0).uniform(0, 255, (1, size, size, 3)).astype(inp["dtype"])
+    x = np.random.default_rng(0).uniform(0, 255, (1, *size, 3)).astype(inp["dtype"])
 
     def run():
         interp.set_tensor(inp["index"], x)
@@ -77,12 +77,12 @@ def main() -> None:
         fp16 = load_inference_model(args.model, cfg, dtype="float16")
     else:
         cfg = Config.from_yaml(args.config)
-        model = build_posenet(cfg.model)
+        model = build_model(cfg.model)
         keras.mixed_precision.set_global_policy("mixed_float16")
-        fp16 = build_posenet(cfg.model)
+        fp16 = build_model(cfg.model)
         keras.mixed_precision.set_global_policy("float32")
-    size = cfg.model.input_size
-    print(f"PoseNet {size}x{size}, {model.count_params() / 1e6:.2f}M params")
+    size = cfg.model.input_shape
+    print(f"{cfg.model.arch} {size[0]}x{size[1]}, {model.count_params() / 1e6:.2f}M params")
 
     if tf.config.list_physical_devices("GPU"):
         for batch in (1, 32):
@@ -93,7 +93,7 @@ def main() -> None:
     if args.model:
         export_dir = Path(args.model).parent / "export"
         for name in ("fp16", "int8"):
-            path = export_dir / f"posenet_{name}.tflite"
+            path = export_dir / f"{cfg.model.arch}_{name}.tflite"
             if path.exists():
                 ms = bench_tflite(path, size, args.iters // 4, args.threads)
                 _report(f"TFLite {name} ({args.threads} thr)", ms, 1)
