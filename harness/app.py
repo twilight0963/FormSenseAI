@@ -16,7 +16,7 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from harness.config import HarnessConfig, load_config
-from harness.draw import draw_pose
+from harness.draw import draw_feedback, draw_pose
 from harness.pose import Pose, PoseEstimator
 from harness.source import Source, open_source
 
@@ -51,12 +51,13 @@ class Worker(threading.Thread):
     is slower than real time, a video plays slower rather than skipping frames.
     """
 
-    def __init__(self, cfg: HarnessConfig, estimator: PoseEstimator, source: Source):
+    def __init__(self, cfg: HarnessConfig, estimator: PoseEstimator, source: Source, coach=None):
         super().__init__(daemon=True)
         self.cfg = cfg
         self.estimator = estimator
         self.source = source
-        self.frames: queue.Queue[tuple[np.ndarray, Pose, float]] = queue.Queue(maxsize=1)
+        self.coach = coach  # formcheck.coach.Coach or None
+        self.frames: queue.Queue[tuple[np.ndarray, Pose, float, object]] = queue.Queue(maxsize=1)
         self.stop = threading.Event()
         self.paused = threading.Event()
         self.restart = threading.Event()
@@ -79,6 +80,8 @@ class Worker(threading.Thread):
                 if not self.source.is_live:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 prev, self.ended = None, False
+                if self.coach is not None:
+                    self.coach.reset()
                 self.paused.clear()
             if self.paused.is_set():
                 self.stop.wait(0.05)
@@ -103,6 +106,11 @@ class Worker(threading.Thread):
             )
             infer_ms = (time.perf_counter() - t0) * 1000.0
             prev = pose
+            feedback = None
+            if self.coach is not None:
+                # Video time for files (so playback speed doesn't matter), wall clock for webcams.
+                t = time.perf_counter() if self.source.is_live else cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+                feedback = self.coach.update(pose.keypoints, pose.scores, t)
 
             if not self.source.is_live:
                 next_time += interval
@@ -116,15 +124,16 @@ class Worker(threading.Thread):
                 self.frames.get_nowait()
             except queue.Empty:
                 pass
-            self.frames.put((bgr, pose, infer_ms))
+            self.frames.put((bgr, pose, infer_ms, feedback))
 
 
 class App:
-    def __init__(self, root: tk.Tk, cfg: HarnessConfig, estimator: PoseEstimator, source: Source):
+    def __init__(self, root: tk.Tk, cfg: HarnessConfig, estimator: PoseEstimator, source: Source, coach=None):
         self.root, self.cfg, self.source, self.estimator = root, cfg, source, estimator
-        self.worker = Worker(cfg, estimator, source)
+        self.worker = Worker(cfg, estimator, source, coach)
         self.show_skeleton = tk.BooleanVar(value=True)
-        self.last: tuple[np.ndarray, Pose, float] | None = None
+        self.show_feedback = tk.BooleanVar(value=cfg.feedback)
+        self.last: tuple[np.ndarray, Pose, float, object] | None = None
         self.photo: ImageTk.PhotoImage | None = None
         self.shown, self.fps_clock, self.display_fps = 0, time.perf_counter(), 0.0
 
@@ -148,6 +157,11 @@ class App:
         ttk.Checkbutton(
             bar, text="Skeleton", variable=self.show_skeleton, command=self.redraw, takefocus=False
         ).pack(side=tk.LEFT, padx=4)
+        if coach is not None:
+            ttk.Checkbutton(
+                bar, text="Feedback", variable=self.show_feedback, command=self.redraw, takefocus=False
+            ).pack(side=tk.LEFT, padx=4)
+            root.bind("<f>", lambda _: (self.show_feedback.set(not self.show_feedback.get()), self.redraw()))
         self.status = ttk.Label(bar, text="")
         self.status.pack(side=tk.LEFT, padx=8)
 
@@ -187,9 +201,11 @@ class App:
         """Overlay the pose on the full-resolution frame, then scale it to fit the window."""
         if self.last is None:
             return
-        bgr, pose, _ = self.last
+        bgr, pose, _, feedback = self.last
         if self.show_skeleton.get():
             bgr = draw_pose(bgr, pose, self.cfg.score_threshold)
+        if feedback is not None and self.show_feedback.get():
+            bgr = draw_feedback(bgr, pose, feedback, self.cfg.score_threshold)
         aw, ah = self.area.winfo_width(), self.area.winfo_height()
         if aw < 2 or ah < 2:
             return
@@ -237,13 +253,20 @@ def run(cfg: HarnessConfig) -> None:
         estimator = PoseEstimator(
             cfg.model_path, cfg.flip_test, cfg.score_threshold, cfg.num_threads, cfg.heatmap_coords
         )
+        coach = None
+        if cfg.classifier_path:
+            from formcheck.classifier import ExerciseClassifier
+            from formcheck.coach import Coach
+
+            print(f"loading classifier {cfg.classifier_path}")
+            coach = Coach(ExerciseClassifier(cfg.classifier_path), cfg.rules_path)
     root = tk.Tk()
     root.withdraw()  # stay hidden while the file picker (if any) is open
     source = open_source(cfg, parent=root)
     if source is None:
         root.destroy()
         return
-    App(root, cfg, estimator, source)
+    App(root, cfg, estimator, source, coach)
     root.deiconify()
     root.mainloop()
 

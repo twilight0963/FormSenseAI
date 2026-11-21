@@ -11,5 +11,6 @@
   "num_threads": 4,
   "heatmap_coords": "auto",
   "window_width": 1280,
-  "window_height": 720
+  "window_height": 720,
+  "classifier_path": "runs/classifier-20261119-212506"
 }

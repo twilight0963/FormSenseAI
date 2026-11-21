@@ -49,8 +49,11 @@ That creates the pretrained `pretrained/vitpose_b_simple/export/saved_model`. Th
 | `num_threads` | `4` | TFLite CPU threads (TFLite models only) |
 | `heatmap_coords` | `"auto"` | `auto` reads it from the run's `config.yaml`; or force `center` / `udp` |
 | `window_width`, `window_height` | `1280`, `720` | Initial window size |
+| `classifier_path` | `""` | Exercise classifier run directory (`runs/classifier-<ts>`); empty turns form feedback off |
+| `rules_path` | `formcheck/rules.json` | Form rules and thresholds |
+| `feedback` | `true` | Whether the feedback overlay starts switched on |
 
-**Controls:** Space plays/pauses, R restarts, S toggles the skeleton. The status bar shows the backend, inference time, mean keypoint score and display FPS. If inference is slower than the video's frame rate, playback slows down rather than dropping frames.
+**Controls:** Space plays/pauses, R restarts, S toggles the skeleton, F toggles form feedback (when a classifier is configured). The status bar shows the backend, inference time, mean keypoint score and display FPS. If inference is slower than the video's frame rate, playback slows down rather than dropping frames.
 
 **Finding the person:** with no previous pose to track, the frame is searched with model-shaped windows (several full-height windows across a wide frame), the most confident one is kept, and the model runs again on a crop around its keypoints. While tracking, each frame is cropped around the previous pose.
 
@@ -64,5 +67,29 @@ harness/
   draw.py          stick-figure overlay
   source.py        webcam / video / file picker
   app.py           Tk window + inference worker thread
+formcheck/         Stage 2: exercise classifier + form feedback
+  skeleton.py      joint angles, normalization, classifier features
+  extract.py       ViTPose over Penn Action gym videos → keypoint sequences
+  classifier.py    temporal CNN + runtime wrapper
+  train.py         classifier training and test report
+  rules.py         rep counting and form checks
+  rules.json       per-exercise thresholds and cue text
+  coach.py         live pose stream → exercise, reps, cues
 tests/             pytest
 ```
+
+## Stage 2: exercise classifier and form feedback
+
+The harness can name the exercise being done, count reps and give form cues such as *"Lift your left arm further"* or *"Go deeper"*, with the bones a cue is about drawn in red.
+
+- **Classifier** (`formcheck/classifier.py`): a single frame can't tell a squat from standing, so a small temporal CNN looks at the last ~1.6 s of keypoints (48 frames resampled to 30 fps). Each frame is described by hip-centred, torso-scaled joint positions, the sine/cosine of every joint angle and a visibility mask. It covers Penn Action's 7 gym exercises: bench press, clean & jerk, jumping jacks, pull-up, push-up, sit-up and squat. Low confidence shows as "Detecting exercise...".
+- **Form rules** (`formcheck/rules.py`, thresholds in `rules.json`): there's no labelled good/bad form data, so each exercise has a primary angle (knee for squats, elbow for push-ups, shoulder for jumping jacks, ...). A hysteresis state machine cuts reps out of it, and each finished rep is checked for depth, lockout, body line and left/right symmetry. Symmetry checks only run when the camera faces the person, and depth/line checks only when side-on (estimated from shoulder width / torso length), because 2D angles are misleading otherwise.
+
+Train it on keypoints the Stage 1 model predicts (so training input looks like runtime input):
+
+```bash
+python -m formcheck.extract            # Penn Action → data/keypoints/penn/*.npz  (~30 min on a laptop GPU)
+python -m formcheck.train              # → runs/classifier-<ts>/ (model.keras, config.json, report.txt)
+```
+
+Then set `"classifier_path": "runs/classifier-<ts>"` in `config.json`.

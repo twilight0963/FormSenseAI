@@ -1,0 +1,210 @@
+{
+  "_doc": "Form rules per exercise. Angles in degrees (see formcheck/skeleton.py): elbow/knee/hip/body are 180 when straight; shoulder is 0 with the arm at the side and 180 overhead; torso_lean is 0 upright. A rep starts when the primary angle (mean of both sides) crosses 'enter' away from the rest position and ends when it crosses 'exit' back. Checks run at the end of each rep, over the whole rep or (at: peak) the frames around the primary angle's extreme. view: front | side | diagonal | any, or a list of them, from shoulder width / torso length. Cues use {side} (the side that needs to move) and {other}. count_on_hold (seconds): also count and judge a rep once the primary stays past 'enter' that long (a held lockout).",
+  "smoothing": 0.4,
+  "hold_seconds": 3.0,
+  "min_rep_seconds": 0.4,
+  "max_rep_seconds": 10.0,
+  "view": {
+    "front_above": 0.55,
+    "side_below": 0.35
+  },
+  "exercises": {
+    "squat": {
+      "primary": "knee",
+      "rest": "high",
+      "enter": 145,
+      "exit": 160,
+      "checks": [
+        {
+          "type": "min_at_most",
+          "angle": "knee",
+          "value": 100,
+          "view": "side",
+          "cue": "Go deeper"
+        },
+        {
+          "type": "max_at_most",
+          "angle": "torso_lean",
+          "value": 50,
+          "view": "side",
+          "cue": "Keep your chest up"
+        },
+        {
+          "type": "symmetry",
+          "angle": "knee",
+          "extreme": "min",
+          "value": 20,
+          "view": "front",
+          "cue": "Bend your {side} knee as much as your {other}"
+        }
+      ]
+    },
+    "pushup": {
+      "primary": "elbow",
+      "rest": "high",
+      "enter": 135,
+      "exit": 150,
+      "checks": [
+        {
+          "type": "min_at_least",
+          "angle": "body",
+          "value": 155,
+          "view": [
+            "side",
+            "diagonal"
+          ],
+          "cue": "Keep your body in a straight line from shoulders to ankles"
+        },
+        {
+          "type": "min_at_most",
+          "angle": "elbow",
+          "value": 100,
+          "view": [
+            "side",
+            "diagonal"
+          ],
+          "cue": "Lower your chest further"
+        },
+        {
+          "type": "max_at_least",
+          "angle": "elbow",
+          "value": 155,
+          "view": "any",
+          "cue": "Straighten your arms fully at the top"
+        },
+        {
+          "type": "symmetry",
+          "angle": "elbow",
+          "extreme": "min",
+          "value": 15,
+          "view": "front",
+          "cue": "Bend your {side} arm as much as your {other}"
+        }
+      ]
+    },
+    "bench_press": {
+      "primary": "elbow",
+      "rest": "high",
+      "enter": 130,
+      "exit": 150,
+      "checks": [
+        {
+          "type": "min_at_most",
+          "angle": "elbow",
+          "value": 100,
+          "view": "any",
+          "cue": "Bring the bar lower"
+        },
+        {
+          "type": "max_at_least",
+          "angle": "elbow",
+          "value": 150,
+          "view": "any",
+          "cue": "Extend your arms fully at the top"
+        },
+        {
+          "type": "symmetry",
+          "angle": "elbow",
+          "extreme": "max",
+          "value": 15,
+          "view": "front",
+          "cue": "Extend your {side} arm fully"
+        }
+      ]
+    },
+    "pullup": {
+      "primary": "elbow",
+      "rest": "high",
+      "enter": 120,
+      "exit": 140,
+      "checks": [
+        {
+          "type": "min_at_most",
+          "angle": "elbow",
+          "value": 80,
+          "view": "any",
+          "cue": "Pull higher, chin over the bar"
+        },
+        {
+          "type": "max_at_least",
+          "angle": "elbow",
+          "value": 150,
+          "view": "any",
+          "cue": "Lower all the way to straight arms"
+        },
+        {
+          "type": "symmetry",
+          "angle": "elbow",
+          "extreme": "min",
+          "value": 15,
+          "view": "front",
+          "cue": "Pull evenly: bend your {side} arm more"
+        }
+      ]
+    },
+    "situp": {
+      "primary": "hip",
+      "rest": "high",
+      "enter": 95,
+      "exit": 110,
+      "checks": [
+        {
+          "type": "min_at_most",
+          "angle": "hip",
+          "value": 75,
+          "view": "any",
+          "cue": "Sit up further"
+        }
+      ]
+    },
+    "jumping_jacks": {
+      "primary": "shoulder",
+      "rest": "low",
+      "enter": 90,
+      "exit": 60,
+      "checks": [
+        {
+          "type": "max_at_least",
+          "angle": "shoulder",
+          "value": 130,
+          "view": "any",
+          "cue": "Raise your arms higher"
+        },
+        {
+          "type": "symmetry",
+          "angle": "shoulder",
+          "extreme": "max",
+          "value": 20,
+          "view": "front",
+          "cue": "Lift your {side} arm further"
+        }
+      ]
+    },
+    "clean_and_jerk": {
+      "primary": "shoulder",
+      "rest": "low",
+      "enter": 130,
+      "exit": 70,
+      "checks": [
+        {
+          "type": "max_at_least",
+          "angle": "elbow",
+          "at": "peak",
+          "value": 160,
+          "view": "any",
+          "cue": "Lock out your arms overhead"
+        },
+        {
+          "type": "symmetry",
+          "angle": "elbow",
+          "at": "peak",
+          "extreme": "max",
+          "value": 15,
+          "view": "front",
+          "cue": "Straighten your {side} arm overhead"
+        }
+      ],
+      "count_on_hold": 0.5
+    }
+  }
+}

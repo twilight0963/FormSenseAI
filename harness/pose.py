@@ -267,7 +267,10 @@ class SavedModelBackend:
 
         gpus = tf.config.list_physical_devices("GPU")
         for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
+            try:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            except RuntimeError:  # TensorFlow already initialised the GPU (e.g. Keras ran first)
+                pass
         self._tf = tf
         self._model = tf.saved_model.load(str(model_path))
         shape = self._model.serve.input_signature[0].shape
@@ -375,6 +378,10 @@ class PoseEstimator:
         n = int(np.ceil(w / win_w))
         xs = np.linspace(win_w / 2.0, w - win_w / 2.0, n)
         return [(np.array([x, h / 2.0]), (win_w, float(h))) for x in xs]
+
+    def predict_in_box(self, image: np.ndarray, bbox: np.ndarray) -> Pose:
+        """Estimate the pose inside a known ``[x, y, w, h]`` person box (e.g. a dataset label)."""
+        return self._run_crop(image, *bbox_to_region(np.asarray(bbox, np.float64), BBOX_SCALE, self.aspect))
 
     def predict(self, image: np.ndarray, prev: Pose | None = None) -> Pose:
         """Estimate the pose in an RGB frame, optionally tracking from the previous frame's pose."""

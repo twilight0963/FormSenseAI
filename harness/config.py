@@ -23,6 +23,10 @@ class HarnessConfig:
     heatmap_coords: str = "auto"  # auto (from the run's config.yaml) | center | udp
     window_width: int = 1280
     window_height: int = 720
+    # Stage 2 form feedback: exercise classifier run directory (empty → no feedback) and rules.
+    classifier_path: str = ""
+    rules_path: str = "formcheck/rules.json"
+    feedback: bool = True  # initial state of the Feedback toggle
 
 
 def load_config(path: str | Path) -> HarnessConfig:
@@ -41,6 +45,13 @@ def load_config(path: str | Path) -> HarnessConfig:
         cfg.video_path = str(base / Path(cfg.video_path).expanduser())
     if cfg.video_dir:
         cfg.video_dir = str(base / Path(cfg.video_dir).expanduser())
+    if cfg.classifier_path:
+        cfg.classifier_path = str(base / cfg.classifier_path)
+        if not (Path(cfg.classifier_path) / "model.keras").is_file():
+            raise FileNotFoundError(
+                f"classifier not found: {cfg.classifier_path} (set classifier_path in {path})"
+            )
+    cfg.rules_path = str(base / cfg.rules_path)
     if not Path(cfg.model_path).exists():
         raise FileNotFoundError(f"model not found: {cfg.model_path} (set model_path in {path})")
     return cfg
